@@ -5,7 +5,8 @@ import re
 org = "nf-core"
 
 # Your GitHub personal access token
-with open('/home/562/gs5517/.github_token', 'r') as file:
+# Expects github token is saved to homedir and github_token file
+with open('$HOME/.github_token', 'r') as file:
     token = file.read().replace('\n', '')
 
 # The headers for the requests

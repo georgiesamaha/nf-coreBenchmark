@@ -32,3 +32,5 @@ Run script to output summary of all nf-core pipeline's withLabel resource settin
 ```
 python3 fetchConfigs.py
 ```
+
+
