@@ -2,4 +2,4 @@ nf-core-*
 nf-core_pipeline_resources.txt
 env/
 .nextflow
-
+config_parse.txt

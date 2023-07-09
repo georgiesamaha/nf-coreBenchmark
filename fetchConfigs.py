@@ -1,84 +1,58 @@
 import requests
 import re
+from github import Github
 
-# The nf-core GitHub organization
-org = "nf-core"
+# Use the Github API
+with open("/home/562/gs5517/.github_token", 'r') as f:
+    token = f.read().strip()
+g = Github(token)
 
-# Your GitHub personal access token
-# Expects github token is saved to homedir and github_token file
-with open('$HOME/.github_token', 'r') as file:
-    token = file.read().replace('\n', '')
+# Fetch all nf-core repositories
+nfcore_repos = [repo.full_name for repo in g.get_organization("nf-core").get_repos()]
 
-# The headers for the requests
-headers = {
-    "Authorization": f"token {token}",
-    "Accept": "application/vnd.github.v3+json"
-}
-
-# Get all the nf-core repositories from the GitHub API
-res = requests.get(f"https://api.github.com/orgs/{org}/repos", headers=headers)
-repos = res.json()
-
-# Check if there was an error
-if "message" in repos:
-    print(f"Error fetching repositories: {repos['message']}")
-    exit(1)
-
-# A regex to match the resource requirements in the base.config file
-pattern = re.compile(r'\s+cpus\s+=\s+{ check_max\((.+)\s*\*\s*task\.attempt, \'cpus\' \) }|\s+memory\s+=\s+{ check_max\((.+)\s*\*\s*task\.attempt, \'memory\' \) }|\s+time\s+=\s+{ check_max\((.+)\s*\*\s*task\.attempt, \'time\' \) }')
-
-# A regex to match the label names
-label_pattern = re.compile(r'withLabel:(process_single|process_low|process_medium|process_high|process_high_memory)')
-
-# Create a list to store the results
-results = []
-
-# Go through each repo
-for repo in repos:
-    # The repo name
-    repo_name = repo["name"]
-
-    # Default branch
-    default_branch = repo["default_branch"]
-
-    print(f"Fetching base.config for {repo_name} from branch {default_branch}")
-
-    # Try to get the base.config file from the conf directory in the default branch of the repo
-    res = requests.get(f"https://raw.githubusercontent.com/{org}/{repo_name}/{default_branch}/conf/base.config", headers=headers)
-
-    # If the request was successful
-    if res.status_code == 200:
-        # The contents of the base.config file
-        config = res.text
-
-        # Find all 'withLabel' sections in the config
-        matches = label_pattern.findall(config)
-
-        # For each 'withLabel' section
-        for label in matches:
-            # Try to find the resource requirements in the section
-            matches = pattern.findall(config)
-
-            # If there are matches
-            if matches:
-                # Extract the resources
-                cpus = [re.sub(r'\s*\*\s*task\.attempt', '', match[0]) for match in matches if match[0]]
-                memory = [re.sub(r'\s*\*\s*task\.attempt', '', match[1]) for match in matches if match[1]]
-                time = [re.sub(r'\s*\*\s*task\.attempt', '', match[2]) for match in matches if match[2]]
-
-                # Add the results to the list
-                results.append([repo_name, default_branch, label, ", ".join(cpus), ", ".join(memory), ", ".join(time)])
+# Function to fetch the base.config file
+def get_base_config(repo):
+    url = f"https://raw.githubusercontent.com/{repo}/master/conf/base.config"
+    response = requests.get(url)
+    if response.status_code == 200:
+        return response.text
     else:
-        print(f"Error fetching base.config for {repo_name} from branch {default_branch}: {res.content}")
+        return None
 
-# Write the results to a tab-delimited file
-output_file = "nf-core_pipeline_resources.txt"
-with open(output_file, "w") as file:
-    # Write the header
-    file.write("Pipeline Name\tBranch\tLabel\tCPUs\tMemory\tTime\n")
+# Function to parse the Nextflow lines from the config
+def parse_nextflow_lines(config):
+    lines = []
+    pattern = r'(with(?:Label|Name):.+?\{(?:.|\n)+?\})'
+    matches = re.findall(pattern, config, re.DOTALL)
+    for match in matches:
+        lines.append(match)
+    return lines
 
-    # Write the results
-    for result in results:
-        file.write("\t".join(result) + "\n")
+# Function to extract the desired information from the line
+def extract_info(line):
+    line = re.sub(r"\s*with(?:Label|Name):\s*", "", line)  # Remove 'withLabel:' or 'withName:'
+    line = re.sub(r"\{ check_max\(\s*", "", line)  # Remove "{ check_max( "
+    line = re.sub(r"\s*,\s*'cpus'", "", line)  # Remove ", 'cpus'"
+    line = re.sub(r"\s*\*\s*task.attempt", "", line)  # Remove "* task.attempt"
+    line = re.sub(r"\s*,\s*'memory'", "", line)  # Remove ", 'memory'"
+    line = re.sub(r"\s*,\s*'time'", "", line)  # Remove ", 'time'"
+    line = re.sub(r"\s*\)\s*}", "", line)  # Remove "    ) }"
+    line = line.strip()  # Remove leading/trailing whitespace
+    return line
 
-print(f"Output written to {output_file}")
+# File to write reformatted output
+output_file = "config_parse.txt"
+
+# Loop over all nf-core repositories and write reformatted output to the file
+with open(output_file, 'w') as f:
+    for repo in nfcore_repos:
+        config = get_base_config(repo)
+        if config is not None:
+            lines = parse_nextflow_lines(config)
+            if lines:
+                for line in lines:
+                    if "withLabel:error ignore" not in line and "withLabel:error_retry" not in line:
+                        formatted_line = extract_info(line)
+                        process = formatted_line.split()[0]  # Extract the process or label
+                        info = ' '.join(formatted_line.split()[1:])  # Extract the time/cpus/memory information
+                        f.write(f"{repo} {process} {info}\n")
